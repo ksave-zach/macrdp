@@ -3,6 +3,7 @@ use core_graphics::event::{CGEvent, CGEventTapLocation, CGEventType, CGMouseButt
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
 use foreign_types::ForeignType;
+use std::sync::Mutex;
 
 extern "C" {
     fn CGEventCreateScrollWheelEvent2(
@@ -18,13 +19,20 @@ extern "C" {
 /// ScrollEventUnit::Line
 const SCROLL_UNIT_LINE: u32 = 1;
 
-pub struct MouseInjector;
+pub struct MouseInjector {
+    /// Track which button is currently pressed so move events can use the
+    /// correct *Dragged event type (LeftMouseDragged etc.) instead of
+    /// MouseMoved — otherwise drag operations won't work.
+    held_button: Mutex<Option<(CGMouseButton, MouseButton)>>,
+}
 
 impl MouseInjector {
     pub fn new() -> Result<Self> {
         let _ = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
             .map_err(|_| anyhow::anyhow!("Failed to create CGEventSource — check Accessibility permission"))?;
-        Ok(Self)
+        Ok(Self {
+            held_button: Mutex::new(None),
+        })
     }
 
     fn source() -> Result<CGEventSource> {
@@ -35,16 +43,21 @@ impl MouseInjector {
     pub fn move_to(&self, x: u16, y: u16) -> Result<()> {
         let point = CGPoint::new(x as f64, y as f64);
         let source = Self::source()?;
-        let event = CGEvent::new_mouse_event(
-            source,
-            CGEventType::MouseMoved,
-            point,
-            CGMouseButton::Left,
-        )
-        .map_err(|_| anyhow::anyhow!("Failed to create mouse move event"))?;
+
+        let (event_type, cg_button) = match *self.held_button.lock().unwrap() {
+            Some((cg_btn, _)) => match cg_btn {
+                CGMouseButton::Left => (CGEventType::LeftMouseDragged, CGMouseButton::Left),
+                CGMouseButton::Right => (CGEventType::RightMouseDragged, CGMouseButton::Right),
+                CGMouseButton::Center => (CGEventType::OtherMouseDragged, CGMouseButton::Center),
+            },
+            None => (CGEventType::MouseMoved, CGMouseButton::Left),
+        };
+
+        let event = CGEvent::new_mouse_event(source, event_type, point, cg_button)
+            .map_err(|_| anyhow::anyhow!("Failed to create mouse move event"))?;
 
         event.post(CGEventTapLocation::HID);
-        tracing::trace!(x, y, "Mouse moved");
+        tracing::trace!(x, y, ?event_type, "Mouse moved");
         Ok(())
     }
 
@@ -59,6 +72,16 @@ impl MouseInjector {
             (MouseButton::Middle, false) => (CGEventType::OtherMouseUp, CGMouseButton::Center),
         };
 
+        // Track button state so move_to can emit the correct Dragged event
+        {
+            let mut held = self.held_button.lock().unwrap();
+            if pressed {
+                *held = Some((cg_button, button));
+            } else {
+                *held = None;
+            }
+        }
+
         let source = Self::source()?;
         let event = CGEvent::new_mouse_event(source, event_type, point, cg_button)
             .map_err(|_| anyhow::anyhow!("Failed to create mouse button event"))?;
@@ -69,12 +92,15 @@ impl MouseInjector {
     }
 
     pub fn scroll(&self, vertical: i16) -> Result<()> {
+        // RDP sends wheel rotation units (±120 per notch), but CGEvent
+        // expects line count. Scale down to ~4 lines per notch.
+        let lines = vertical as i32 / 30;
         unsafe {
             let event_ref = CGEventCreateScrollWheelEvent2(
                 std::ptr::null_mut(),
                 SCROLL_UNIT_LINE,
                 1,
-                vertical as i32,
+                lines,
                 0,
                 0,
             );
