@@ -351,6 +351,9 @@ impl RdpServer {
         let peer_ip = stream.peer_addr().map(|addr| addr.ip()).ok();
         let framed = TokioFramed::new(stream);
 
+        // Notify input handler of new connection
+        self.handler.lock().await.on_connect();
+
         // Reset GFX state for new connection, preserving peer IP and hot-updated resolution
         let pending_resolution = {
             let mut gs = self.gfx_state.lock().unwrap();

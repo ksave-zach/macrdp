@@ -88,6 +88,13 @@ impl MacInputHandler {
 }
 
 impl RdpServerInputHandler for MacInputHandler {
+    fn on_connect(&mut self) {
+        let _ = std::process::Command::new("caffeinate")
+            .args(["-d", "-u", "-t", "3"])
+            .spawn();
+        tracing::info!("Client connected — caffeinate poke sent");
+    }
+
     fn keyboard(&mut self, event: KeyboardEvent) {
         let Some(kb) = &self.keyboard else { return };
 

@@ -72,6 +72,8 @@ pub enum MouseEvent {
 /// }
 /// ```
 pub trait RdpServerInputHandler: Send {
+    /// Called when a new client connection is established.
+    fn on_connect(&mut self) {}
     fn keyboard(&mut self, event: KeyboardEvent);
     fn mouse(&mut self, event: MouseEvent);
 }

@@ -92,6 +92,17 @@ impl MacInputHandler {
 }
 
 impl RdpServerInputHandler for MacInputHandler {
+    fn on_connect(&mut self) {
+        // Briefly prevent display sleep to wake the loginwindow session
+        // so the "ABC" keyboard input source is reloaded. Without this,
+        // synthetic key events produce wrong characters in the login
+        // screen password field when the display has been idle.
+        let _ = std::process::Command::new("caffeinate")
+            .args(["-d", "-u", "-t", "3"])
+            .spawn();
+        tracing::info!("Client connected — caffeinate poke sent");
+    }
+
     fn keyboard(&mut self, event: KeyboardEvent) {
         let Some(kb) = &self.keyboard else { return };
 
