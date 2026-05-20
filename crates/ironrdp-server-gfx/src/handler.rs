@@ -26,16 +26,16 @@ pub enum KeyboardEvent {
 #[derive(Debug)]
 pub enum MouseEvent {
     Move { x: u16, y: u16 },
-    RightPressed,
-    RightReleased,
-    LeftPressed,
-    LeftReleased,
-    MiddlePressed,
-    MiddleReleased,
-    Button4Pressed,
-    Button4Released,
-    Button5Pressed,
-    Button5Released,
+    RightPressed { x: u16, y: u16 },
+    RightReleased { x: u16, y: u16 },
+    LeftPressed { x: u16, y: u16 },
+    LeftReleased { x: u16, y: u16 },
+    MiddlePressed { x: u16, y: u16 },
+    MiddleReleased { x: u16, y: u16 },
+    Button4Pressed { x: u16, y: u16 },
+    Button4Released { x: u16, y: u16 },
+    Button5Pressed { x: u16, y: u16 },
+    Button5Released { x: u16, y: u16 },
     VerticalScroll { value: i16 },
     Scroll { x: i32, y: i32 },
     RelMove { x: i32, y: i32 },
@@ -63,8 +63,9 @@ pub enum MouseEvent {
 ///     }
 ///
 ///     fn mouse(&mut self, event: MouseEvent) {
-///         let result = match event {
+///         match event {
 ///             MouseEvent::Move { x, y } => println!("Moved mouse to {} {}", x, y),
+///             MouseEvent::LeftPressed { x, y } => println!("Left pressed at {} {}", x, y),
 ///             other => println!("unhandled event: {:?}", other),
 ///         };
 ///     }
@@ -148,85 +149,85 @@ impl From<SyncToggleFlags> for KeyboardEvent {
 
 impl From<MousePdu> for MouseEvent {
     fn from(value: MousePdu) -> Self {
+        let x = value.x_position;
+        let y = value.y_position;
         if value.flags.contains(PointerFlags::LEFT_BUTTON) {
             if value.flags.contains(PointerFlags::DOWN) {
-                MouseEvent::LeftPressed
+                MouseEvent::LeftPressed { x, y }
             } else {
-                MouseEvent::LeftReleased
+                MouseEvent::LeftReleased { x, y }
             }
         } else if value.flags.contains(PointerFlags::RIGHT_BUTTON) {
             if value.flags.contains(PointerFlags::DOWN) {
-                MouseEvent::RightPressed
+                MouseEvent::RightPressed { x, y }
             } else {
-                MouseEvent::RightReleased
+                MouseEvent::RightReleased { x, y }
             }
         } else if value.flags.contains(PointerFlags::VERTICAL_WHEEL) {
             MouseEvent::VerticalScroll {
                 value: value.number_of_wheel_rotation_units,
             }
         } else {
-            MouseEvent::Move {
-                x: value.x_position,
-                y: value.y_position,
-            }
+            MouseEvent::Move { x, y }
         }
     }
 }
 
 impl From<MouseXPdu> for MouseEvent {
     fn from(value: MouseXPdu) -> Self {
+        let x = value.x_position;
+        let y = value.y_position;
         if value.flags.contains(PointerXFlags::BUTTON1) {
             if value.flags.contains(PointerXFlags::DOWN) {
-                MouseEvent::LeftPressed
+                MouseEvent::LeftPressed { x, y }
             } else {
-                MouseEvent::LeftReleased
+                MouseEvent::LeftReleased { x, y }
             }
         } else if value.flags.contains(PointerXFlags::BUTTON2) {
             if value.flags.contains(PointerXFlags::DOWN) {
-                MouseEvent::RightPressed
+                MouseEvent::RightPressed { x, y }
             } else {
-                MouseEvent::RightReleased
+                MouseEvent::RightReleased { x, y }
             }
         } else {
-            MouseEvent::Move {
-                x: value.x_position,
-                y: value.y_position,
-            }
+            MouseEvent::Move { x, y }
         }
     }
 }
 
 impl From<MouseRelPdu> for MouseEvent {
     fn from(value: MouseRelPdu) -> Self {
+        // MouseRelPdu has no absolute coordinates; the handler should use the
+        // last known position for button events.
         if value.flags.contains(PointerRelFlags::BUTTON1) {
             if value.flags.contains(PointerRelFlags::DOWN) {
-                MouseEvent::LeftPressed
+                MouseEvent::LeftPressed { x: 0, y: 0 }
             } else {
-                MouseEvent::LeftReleased
+                MouseEvent::LeftReleased { x: 0, y: 0 }
             }
         } else if value.flags.contains(PointerRelFlags::BUTTON2) {
             if value.flags.contains(PointerRelFlags::DOWN) {
-                MouseEvent::RightPressed
+                MouseEvent::RightPressed { x: 0, y: 0 }
             } else {
-                MouseEvent::RightReleased
+                MouseEvent::RightReleased { x: 0, y: 0 }
             }
         } else if value.flags.contains(PointerRelFlags::BUTTON3) {
             if value.flags.contains(PointerRelFlags::DOWN) {
-                MouseEvent::MiddlePressed
+                MouseEvent::MiddlePressed { x: 0, y: 0 }
             } else {
-                MouseEvent::MiddleReleased
+                MouseEvent::MiddleReleased { x: 0, y: 0 }
             }
         } else if value.flags.contains(PointerRelFlags::XBUTTON1) {
             if value.flags.contains(PointerRelFlags::DOWN) {
-                MouseEvent::Button4Pressed
+                MouseEvent::Button4Pressed { x: 0, y: 0 }
             } else {
-                MouseEvent::Button4Released
+                MouseEvent::Button4Released { x: 0, y: 0 }
             }
         } else if value.flags.contains(PointerRelFlags::XBUTTON2) {
             if value.flags.contains(PointerRelFlags::DOWN) {
-                MouseEvent::Button5Pressed
+                MouseEvent::Button5Pressed { x: 0, y: 0 }
             } else {
-                MouseEvent::Button5Released
+                MouseEvent::Button5Released { x: 0, y: 0 }
             }
         } else {
             MouseEvent::RelMove {
@@ -241,34 +242,34 @@ impl From<ainput::MousePdu> for MouseEvent {
     fn from(value: ainput::MousePdu) -> Self {
         use ainput::MouseEventFlags;
 
+        // assume moves are 0 <= u16::MAX
+        let x: u16 = value.x.try_into().unwrap_or(0);
+        let y: u16 = value.y.try_into().unwrap_or(0);
+
         if value.flags.contains(MouseEventFlags::BUTTON1) {
             if value.flags.contains(MouseEventFlags::DOWN) {
-                MouseEvent::LeftPressed
+                MouseEvent::LeftPressed { x, y }
             } else {
-                MouseEvent::LeftReleased
+                MouseEvent::LeftReleased { x, y }
             }
         } else if value.flags.contains(MouseEventFlags::BUTTON2) {
             if value.flags.contains(MouseEventFlags::DOWN) {
-                MouseEvent::RightPressed
+                MouseEvent::RightPressed { x, y }
             } else {
-                MouseEvent::RightReleased
+                MouseEvent::RightReleased { x, y }
             }
         } else if value.flags.contains(MouseEventFlags::BUTTON3) {
             if value.flags.contains(MouseEventFlags::DOWN) {
-                MouseEvent::MiddlePressed
+                MouseEvent::MiddlePressed { x, y }
             } else {
-                MouseEvent::MiddleReleased
+                MouseEvent::MiddleReleased { x, y }
             }
         } else if value.flags.contains(MouseEventFlags::WHEEL) {
             MouseEvent::Scroll { x: value.x, y: value.y }
         } else if value.flags.contains(MouseEventFlags::REL) {
             MouseEvent::RelMove { x: value.x, y: value.y }
         } else if value.flags.contains(MouseEventFlags::MOVE) {
-            // assume moves are 0 <= u16::MAX
-            MouseEvent::Move {
-                x: value.x.try_into().unwrap_or(0),
-                y: value.y.try_into().unwrap_or(0),
-            }
+            MouseEvent::Move { x, y }
         } else {
             MouseEvent::Move { x: 0, y: 0 }
         }

@@ -117,23 +117,41 @@ impl RdpServerInputHandler for MacInputHandler {
                 self.last_mouse_y = my;
                 m.move_to(mx, my)
             }
-            MouseEvent::LeftPressed => {
-                m.button_event(MouseButton::Left, true, self.last_mouse_x, self.last_mouse_y)
+            MouseEvent::LeftPressed { x, y } => {
+                let (mx, my) = self.coord_mapper.map(x, y);
+                self.last_mouse_x = mx;
+                self.last_mouse_y = my;
+                m.button_event(MouseButton::Left, true, mx, my)
             }
-            MouseEvent::LeftReleased => {
-                m.button_event(MouseButton::Left, false, self.last_mouse_x, self.last_mouse_y)
+            MouseEvent::LeftReleased { x, y } => {
+                let (mx, my) = self.coord_mapper.map(x, y);
+                self.last_mouse_x = mx;
+                self.last_mouse_y = my;
+                m.button_event(MouseButton::Left, false, mx, my)
             }
-            MouseEvent::RightPressed => {
-                m.button_event(MouseButton::Right, true, self.last_mouse_x, self.last_mouse_y)
+            MouseEvent::RightPressed { x, y } => {
+                let (mx, my) = self.coord_mapper.map(x, y);
+                self.last_mouse_x = mx;
+                self.last_mouse_y = my;
+                m.button_event(MouseButton::Right, true, mx, my)
             }
-            MouseEvent::RightReleased => {
-                m.button_event(MouseButton::Right, false, self.last_mouse_x, self.last_mouse_y)
+            MouseEvent::RightReleased { x, y } => {
+                let (mx, my) = self.coord_mapper.map(x, y);
+                self.last_mouse_x = mx;
+                self.last_mouse_y = my;
+                m.button_event(MouseButton::Right, false, mx, my)
             }
-            MouseEvent::MiddlePressed => {
-                m.button_event(MouseButton::Middle, true, self.last_mouse_x, self.last_mouse_y)
+            MouseEvent::MiddlePressed { x, y } => {
+                let (mx, my) = self.coord_mapper.map(x, y);
+                self.last_mouse_x = mx;
+                self.last_mouse_y = my;
+                m.button_event(MouseButton::Middle, true, mx, my)
             }
-            MouseEvent::MiddleReleased => {
-                m.button_event(MouseButton::Middle, false, self.last_mouse_x, self.last_mouse_y)
+            MouseEvent::MiddleReleased { x, y } => {
+                let (mx, my) = self.coord_mapper.map(x, y);
+                self.last_mouse_x = mx;
+                self.last_mouse_y = my;
+                m.button_event(MouseButton::Middle, false, mx, my)
             }
             MouseEvent::VerticalScroll { value } => m.scroll(value),
             _ => {

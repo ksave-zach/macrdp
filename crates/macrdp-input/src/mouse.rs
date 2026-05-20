@@ -22,13 +22,13 @@ pub struct MouseInjector;
 
 impl MouseInjector {
     pub fn new() -> Result<Self> {
-        let _ = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        let _ = CGEventSource::new(CGEventSourceStateID::Private)
             .map_err(|_| anyhow::anyhow!("Failed to create CGEventSource — check Accessibility permission"))?;
         Ok(Self)
     }
 
     fn source() -> Result<CGEventSource> {
-        CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        CGEventSource::new(CGEventSourceStateID::Private)
             .map_err(|_| anyhow::anyhow!("Failed to create CGEventSource"))
     }
 

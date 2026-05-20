@@ -87,11 +87,9 @@ static SCANCODE_MAP: LazyLock<HashMap<u8, u16>> = LazyLock::new(|| {
         (0x35, 0x2C), // / ?
         (0x36, 0x3C), // Right Shift
         // Row 6: Bottom — modifier mapping for Windows → macOS
-        // Physical layout: [Ctrl] [Win] [Alt] [Space] [Alt] [Win] [Ctrl]
-        //         macOS:   [Ctrl] [Opt] [Cmd] [Space] [Cmd] [Opt] [Ctrl]
-        // So: Ctrl→Control, Alt→Command (same position, primary modifier), Win→Option
+        // Ctrl→Control, Win→Command (⌘), Alt→Option (⌥)
         (0x1D, 0x3B), // Left Ctrl → Left Control
-        (0x38, 0x37), // Left Alt → Left Command (⌘) — most intuitive: Alt+C → Cmd+C = copy
+        (0x38, 0x3A), // Left Alt → Left Option (⌥)
         (0x39, 0x31), // Space
         // Numpad — always treat as numeric input (ignore NumLock state).
         // Non-extended scancodes map to numpad digits/operators;
@@ -119,12 +117,11 @@ static SCANCODE_MAP: LazyLock<HashMap<u8, u16>> = LazyLock::new(|| {
 /// Extended RDP scancode → macOS keycode
 static EXTENDED_SCANCODE_MAP: LazyLock<HashMap<u8, u16>> = LazyLock::new(|| {
     HashMap::from([
-        // Modifier keys — Windows → macOS position-based mapping:
-        // Ctrl→Control, Alt→Command, Win→Option
+        // Modifier keys — Ctrl→Control, Win→Command (⌘), Alt→Option (⌥)
         (0x1D, 0x3Eu16), // Right Ctrl → Right Control
-        (0x38, 0x36),    // Right Alt → Right Command (⌘) — consistent with Left Alt→Left Cmd
-        (0x5B, 0x3A),    // Left Win → Left Option (⌥) — by position (between Ctrl and Alt/Cmd)
-        (0x5C, 0x3D),    // Right Win → Right Option (⌥)
+        (0x38, 0x3D),    // Right Alt → Right Option (⌥)
+        (0x5B, 0x37),    // Left Win → Left Command (⌘)
+        (0x5C, 0x36),    // Right Win → Right Command (⌘)
         // Arrow keys
         (0x48, 0x7E), // Up
         (0x50, 0x7D), // Down
@@ -158,16 +155,16 @@ mod tests {
     #[test]
     fn test_modifier_keys() {
         assert_eq!(scancode_to_keycode(0x2A, false), Some(0x38)); // Left Shift
-        assert_eq!(scancode_to_keycode(0x1D, false), Some(0x3B)); // Left Ctrl
-        assert_eq!(scancode_to_keycode(0x38, false), Some(0x37)); // Left Alt → Cmd
+        assert_eq!(scancode_to_keycode(0x1D, false), Some(0x3B)); // Left Ctrl → Control
+        assert_eq!(scancode_to_keycode(0x38, false), Some(0x3A)); // Left Alt → Option
     }
 
     #[test]
     fn test_extended_keys() {
-        assert_eq!(scancode_to_keycode(0x1D, true), Some(0x3E)); // Right Ctrl → Right Control
-        assert_eq!(scancode_to_keycode(0x38, true), Some(0x36)); // Right Alt → Right Command
-        assert_eq!(scancode_to_keycode(0x5B, true), Some(0x3A)); // Left Win → Left Option
-        assert_eq!(scancode_to_keycode(0x5C, true), Some(0x3D)); // Right Win → Right Option
+        assert_eq!(scancode_to_keycode(0x1D, true), Some(0x3E)); // Right Ctrl → Control
+        assert_eq!(scancode_to_keycode(0x38, true), Some(0x3D)); // Right Alt → Option
+        assert_eq!(scancode_to_keycode(0x5B, true), Some(0x37)); // Left Win → Command ⌘
+        assert_eq!(scancode_to_keycode(0x5C, true), Some(0x36)); // Right Win → Command ⌘
         assert_eq!(scancode_to_keycode(0x48, true), Some(0x7E)); // Arrow Up
         assert_eq!(scancode_to_keycode(0x50, true), Some(0x7D)); // Arrow Down
         assert_eq!(scancode_to_keycode(0x4B, true), Some(0x7B)); // Arrow Left

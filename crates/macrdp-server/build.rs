@@ -51,7 +51,6 @@ fn swift_lib_candidates() -> Vec<PathBuf> {
 }
 
 fn main() {
-    // Find and link Swift Concurrency runtime
     let target_lib = "libswift_Concurrency.dylib";
 
     // Check user-specified path first
@@ -63,14 +62,7 @@ fn main() {
         }
     }
 
-    // If system path has it, no extra rpath needed (avoids duplicate loading warnings)
-    let system_path = PathBuf::from("/usr/lib/swift");
-    if system_path.join(target_lib).exists() {
-        // /usr/lib/swift is already in the default search path, no rpath needed
-        return;
-    }
-
-    // Otherwise search candidates
+    // Search candidates — if we find the dylib on disk, add its directory as rpath
     for candidate in swift_lib_candidates() {
         if candidate.join(target_lib).exists() {
             println!("cargo:rustc-link-arg=-Wl,-rpath,{}", candidate.display());
@@ -78,5 +70,10 @@ fn main() {
         }
     }
 
-    println!("cargo:warning=Could not find {target_lib}. Set SWIFT_LIB_PATH env var to the directory containing it.");
+    // Fallback: the dylib may live only in the dyld shared cache (macOS 26+).
+    // The Swift compiler emits @rpath/libswift_Concurrency.dylib references,
+    // so the binary must have an rpath to resolve it. /usr/lib/swift is the
+    // canonical location and is always served by the cache even when no file
+    // exists on disk.
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
 }
