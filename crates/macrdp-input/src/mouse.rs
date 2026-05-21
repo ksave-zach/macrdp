@@ -1,9 +1,10 @@
 use anyhow::Result;
-use core_graphics::event::{CGEvent, CGEventTapLocation, CGEventType, CGMouseButton};
+use core_graphics::event::{CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, EventField};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
 use foreign_types::ForeignType;
 use std::sync::Mutex;
+use std::time::Instant;
 
 extern "C" {
     fn CGEventCreateScrollWheelEvent2(
@@ -19,11 +20,25 @@ extern "C" {
 /// ScrollEventUnit::Line
 const SCROLL_UNIT_LINE: u32 = 1;
 
+/// Double-click time window (macOS default is ~0.5s)
+const DOUBLE_CLICK_INTERVAL_MS: u64 = 500;
+/// Max pixel distance between two clicks to count as double-click
+const DOUBLE_CLICK_DISTANCE: f64 = 5.0;
+
+struct ClickState {
+    time: Instant,
+    x: f64,
+    y: f64,
+    count: u32,
+}
+
 pub struct MouseInjector {
     /// Track which button is currently pressed so move events can use the
     /// correct *Dragged event type (LeftMouseDragged etc.) instead of
     /// MouseMoved — otherwise drag operations won't work.
     held_button: Mutex<Option<(CGMouseButton, MouseButton)>>,
+    /// Track double-click state so CGEvent gets the correct clickCount
+    last_click: Mutex<ClickState>,
 }
 
 impl MouseInjector {
@@ -32,6 +47,12 @@ impl MouseInjector {
             .map_err(|_| anyhow::anyhow!("Failed to create CGEventSource — check Accessibility permission"))?;
         Ok(Self {
             held_button: Mutex::new(None),
+            last_click: Mutex::new(ClickState {
+                time: Instant::now(),
+                x: 0.0,
+                y: 0.0,
+                count: 0,
+            }),
         })
     }
 
@@ -85,6 +106,28 @@ impl MouseInjector {
         let source = Self::source()?;
         let event = CGEvent::new_mouse_event(source, event_type, point, cg_button)
             .map_err(|_| anyhow::anyhow!("Failed to create mouse button event"))?;
+
+        // Set click state so macOS recognizes double-clicks
+        if matches!(button, MouseButton::Left) {
+            let mut click = self.last_click.lock().unwrap();
+            if pressed {
+                let elapsed = click.time.elapsed().as_millis() as u64;
+                let dx = (point.x - click.x).abs();
+                let dy = (point.y - click.y).abs();
+                if elapsed < DOUBLE_CLICK_INTERVAL_MS
+                    && dx < DOUBLE_CLICK_DISTANCE
+                    && dy < DOUBLE_CLICK_DISTANCE
+                {
+                    click.count += 1;
+                } else {
+                    click.count = 1;
+                }
+                click.time = Instant::now();
+                click.x = point.x;
+                click.y = point.y;
+            }
+            event.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, click.count as i64);
+        }
 
         event.post(CGEventTapLocation::HID);
         tracing::trace!(?button, pressed, x, y, "Mouse button event");
