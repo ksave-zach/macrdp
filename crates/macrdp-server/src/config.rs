@@ -38,7 +38,7 @@ pub struct AudioConfig {
 impl Default for AudioConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             sample_rate: 48000,
             channels: 2,
         }
