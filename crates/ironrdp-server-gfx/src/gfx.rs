@@ -184,6 +184,28 @@ pub struct GfxState {
     pub encoder_pref: Option<String>,
     /// Hot-updatable: chroma mode (set via ConfigUpdate)
     pub chroma_mode: Option<String>,
+    /// Backpressure: true while frames are being skipped due to ack backlog
+    backpressure: bool,
+    /// When backpressure mode was entered (watchdog reference)
+    bp_since: Option<std::time::Instant>,
+}
+
+/// Backpressure high-water mark: start skipping frames when this many are unacknowledged
+pub const BACKPRESSURE_HIGH_WATER: u32 = 20;
+/// Backpressure low-water mark: resume sending once the backlog drops to this
+pub const BACKPRESSURE_LOW_WATER: u32 = 6;
+/// Longest time to stay in skip mode before a watchdog reset (stalled acks)
+pub const BACKPRESSURE_MAX_SKIP: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// What the display loop should do with the next frame, given the ack backlog
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackpressureAction {
+    /// Send normally
+    Send,
+    /// Skip this frame (do not encode or send)
+    Skip,
+    /// Resume sending and force an IDR so the client resyncs cleanly
+    SendForceIdr,
 }
 
 impl GfxState {
@@ -218,6 +240,8 @@ impl GfxState {
             resolution: None,
             encoder_pref: None,
             chroma_mode: None,
+            backpressure: false,
+            bp_since: None,
         }
     }
 
@@ -278,6 +302,41 @@ impl GfxState {
         };
     }
 
+    /// Decide whether to send the next frame, based on the ack backlog.
+    ///
+    /// Hysteresis: engage skip mode at the high-water mark, resume at the
+    /// low-water mark; a watchdog resets accounting if acks stall for too long.
+    pub fn backpressure_action(&mut self) -> BackpressureAction {
+        self.backpressure_action_at(std::time::Instant::now())
+    }
+
+    fn backpressure_action_at(&mut self, now: std::time::Instant) -> BackpressureAction {
+        if self.backpressure {
+            if let Some(since) = self.bp_since {
+                if now.duration_since(since) > BACKPRESSURE_MAX_SKIP {
+                    // Acks have stalled for too long — reset accounting and resync
+                    self.backpressure = false;
+                    self.bp_since = None;
+                    self.pending_acks = 0;
+                    return BackpressureAction::SendForceIdr;
+                }
+            }
+            if self.pending_acks <= BACKPRESSURE_LOW_WATER {
+                self.backpressure = false;
+                self.bp_since = None;
+                BackpressureAction::SendForceIdr
+            } else {
+                BackpressureAction::Skip
+            }
+        } else if self.pending_acks >= BACKPRESSURE_HIGH_WATER {
+            self.backpressure = true;
+            self.bp_since = Some(now);
+            BackpressureAction::Skip
+        } else {
+            BackpressureAction::Send
+        }
+    }
+
     /// Get recommended bitrate based on network quality and base bitrate
     pub fn adaptive_bitrate(&self, base_bitrate: u32) -> u32 {
         (base_bitrate as f32 * self.network_quality) as u32
@@ -285,6 +344,69 @@ impl GfxState {
 
     pub fn is_ready(&self) -> bool {
         self.channel_id.is_some() && self.avc420_supported && self.caps_confirmed
+    }
+}
+
+#[cfg(test)]
+mod backpressure_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn fresh() -> GfxState {
+        GfxState::new(1920, 1080, false)
+    }
+
+    #[test]
+    fn sends_normally_below_high_water() {
+        let mut s = fresh();
+        let t = Instant::now();
+        s.pending_acks = 5;
+        assert_eq!(s.backpressure_action_at(t), BackpressureAction::Send);
+        s.pending_acks = BACKPRESSURE_HIGH_WATER - 1;
+        assert_eq!(s.backpressure_action_at(t), BackpressureAction::Send);
+        assert!(!s.backpressure);
+    }
+
+    #[test]
+    fn engages_at_high_water_and_skips_until_low() {
+        let mut s = fresh();
+        let t = Instant::now();
+        s.pending_acks = BACKPRESSURE_HIGH_WATER;
+        assert_eq!(s.backpressure_action_at(t), BackpressureAction::Skip);
+        assert!(s.backpressure);
+        s.pending_acks = BACKPRESSURE_LOW_WATER + 1;
+        assert_eq!(
+            s.backpressure_action_at(t + Duration::from_millis(500)),
+            BackpressureAction::Skip
+        );
+        s.pending_acks = BACKPRESSURE_LOW_WATER;
+        assert_eq!(
+            s.backpressure_action_at(t + Duration::from_millis(600)),
+            BackpressureAction::SendForceIdr
+        );
+        assert!(!s.backpressure);
+        assert_eq!(
+            s.backpressure_action_at(t + Duration::from_millis(700)),
+            BackpressureAction::Send
+        );
+    }
+
+    #[test]
+    fn watchdog_resets_stalled_acks() {
+        let mut s = fresh();
+        let t = Instant::now();
+        s.pending_acks = 100;
+        assert_eq!(s.backpressure_action_at(t), BackpressureAction::Skip);
+        assert_eq!(
+            s.backpressure_action_at(t + BACKPRESSURE_MAX_SKIP + Duration::from_secs(1)),
+            BackpressureAction::SendForceIdr
+        );
+        assert_eq!(s.pending_acks, 0);
+        assert!(!s.backpressure);
+        assert_eq!(
+            s.backpressure_action_at(t + BACKPRESSURE_MAX_SKIP + Duration::from_secs(2)),
+            BackpressureAction::Send
+        );
     }
 }
 

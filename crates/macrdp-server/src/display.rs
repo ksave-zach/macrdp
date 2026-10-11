@@ -3,7 +3,7 @@ use bytes::Bytes;
 use ironrdp_server::{
     BitmapUpdate, DesktopSize, DisplayUpdate, GfxFrameUpdate, GfxUncompressedUpdate,
     PixelFormat as RdpPixelFormat, RdpServerDisplay, RdpServerDisplayUpdates,
-    UncompressedRect, gfx::GfxState,
+    UncompressedRect, gfx::{BackpressureAction, GfxState},
 };
 use macrdp_audio::SharedAudioTx;
 use macrdp_capture::{CaptureConfig, CapturePixelFormat, CapturedFrame, CgFallbackCapturer, FrameData, ScreenCapturer};
@@ -203,6 +203,8 @@ impl RdpServerDisplay for MacDisplay {
             display_frame_count: 0,
             skip_next_frame: false,
             overload_count: 0,
+            bp_skip_count: 0,
+            force_idr_next: false,
             perf_stats: self.perf_stats.clone(),
         }))
     }
@@ -219,6 +221,10 @@ struct MacDisplayUpdates {
     skip_next_frame: bool,
     /// Counter for rate-limiting encode overload warnings
     overload_count: u64,
+    /// Backpressure: skipped-frame counter (for rate-limited logging)
+    bp_skip_count: u64,
+    /// Set when resuming from backpressure — forces an IDR on the next encode
+    force_idr_next: bool,
     /// Shared performance statistics collector (None = disabled)
     perf_stats: Option<SharedPerfStats>,
 }
@@ -277,6 +283,34 @@ impl RdpServerDisplayUpdates for MacDisplayUpdates {
 
 impl MacDisplayUpdates {
     fn encode_and_send(&mut self, frame: CapturedFrame) -> Result<Option<DisplayUpdate>> {
+        // Backpressure: if the client is far behind on frame acks, skip this frame
+        // entirely (do not encode/send) — continuing to send only grows the queue
+        // and adds latency; on resume the next encoded frame is forced to an IDR.
+        {
+            let mut st = self.gfx_state.lock().unwrap();
+            match st.backpressure_action() {
+                BackpressureAction::Skip => {
+                    self.bp_skip_count += 1;
+                    if self.bp_skip_count == 1 || self.bp_skip_count % 300 == 0 {
+                        tracing::warn!(
+                            pending = st.pending_acks,
+                            skipped = self.bp_skip_count,
+                            "backpressure: skipping frames (client ack backlog)"
+                        );
+                    }
+                    return Ok(Some(DisplayUpdate::DefaultPointer));
+                }
+                BackpressureAction::SendForceIdr => {
+                    self.bp_skip_count = 0;
+                    self.force_idr_next = true;
+                    tracing::info!("backpressure: resumed — forcing keyframe");
+                }
+                BackpressureAction::Send => {
+                    self.bp_skip_count = 0;
+                }
+            }
+        }
+
         // Encode overload protection: skip this frame if previous encode took too long
         if self.skip_next_frame {
             self.skip_next_frame = false;
@@ -359,7 +393,7 @@ impl MacDisplayUpdates {
                 }
             }
 
-            // GFX H.264 path — always send at capture rate, never block on acks
+            // GFX H.264 path — capture rate; backpressure skipping applied above
             if let Some(encoder) = &mut self.encoder {
                 self.display_frame_count += 1;
                 let t0 = std::time::Instant::now();
@@ -368,7 +402,8 @@ impl MacDisplayUpdates {
                 match &frame.data {
                     FrameData::PixelBuffer(buf) => {
                         // Zero-copy VT path — encode CVPixelBuffer directly
-                        match encoder.encode_pixel_buffer(buf.as_ptr(), false) {
+                        let force = std::mem::take(&mut self.force_idr_next);
+                        match encoder.encode_pixel_buffer(buf.as_ptr(), force) {
                             Ok(encoded) if !encoded.data.is_empty() => {
                                 let encode_ms = t0.elapsed().as_secs_f64() * 1000.0;
                                 let is_keyframe = encoded.is_keyframe;
@@ -429,6 +464,9 @@ impl MacDisplayUpdates {
 
                 // AVC444 dual-stream path
                 if use_444 && encoder.supports_444() {
+                    if std::mem::take(&mut self.force_idr_next) {
+                        encoder.force_keyframe();
+                    }
                     match encoder.encode_bgra_444(bgra, frame.width, frame.height, frame.stride) {
                         Ok(encoded) if !encoded.main_view.data.is_empty() => {
                             let encode_ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -488,6 +526,9 @@ impl MacDisplayUpdates {
                 }
 
                 // AVC420 path (default or fallback from AVC444 failure)
+                if std::mem::take(&mut self.force_idr_next) {
+                    encoder.force_keyframe();
+                }
                 match encoder.encode_bgra(bgra, frame.width, frame.height, frame.stride) {
                     Ok(encoded) if !encoded.data.is_empty() => {
                         let encode_ms = t0.elapsed().as_secs_f64() * 1000.0;
