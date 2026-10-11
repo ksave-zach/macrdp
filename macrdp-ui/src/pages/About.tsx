@@ -67,7 +67,7 @@ function About() {
         {/* Links row */}
         <div className="mt-3 flex items-center justify-center gap-3">
           <a
-            href="https://github.com/aspect-build/macrdp"
+            href="https://github.com/ksave-zach/macrdp"
             target="_blank"
             rel="noopener noreferrer"
             className="text-xs text-accent hover:underline"
