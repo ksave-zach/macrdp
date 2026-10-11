@@ -555,8 +555,6 @@ impl Sequence for Acceptor {
                             server_user = ?self.creds.as_ref().map(|c| &c.username),
                             client_pass_len = creds.password.len(),
                             server_pass_len = ?self.creds.as_ref().map(|c| c.password.len()),
-                            client_pass_bytes = ?creds.password.as_bytes(),
-                            server_pass_bytes = ?self.creds.as_ref().map(|c| c.password.as_bytes()),
                             "Credential mismatch — rejecting"
                         );
                         let info = ServerSetErrorInfoPdu(ErrorInfo::ProtocolIndependentCode(
