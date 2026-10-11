@@ -1,6 +1,7 @@
 use ironrdp_server::{KeyboardEvent, MouseEvent, RdpServerInputHandler};
 use macrdp_input::{KeyboardInjector, MouseButton, MouseInjector};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// Maps RDP desktop coordinates to macOS logical coordinates.
 ///
@@ -9,6 +10,10 @@ use std::sync::{Arc, Mutex};
 /// display size (what CGEvent expects).
 ///
 /// Formula: `mac = rdp × logical ÷ rdp_desktop`
+///
+/// The macOS logical size is re-read at most once per second on each
+/// mapping, so later display configuration changes are picked up without
+/// restarting the server.
 #[derive(Debug, Clone)]
 pub struct MouseCoordMapper(Arc<Mutex<CoordState>>);
 
@@ -18,6 +23,7 @@ struct CoordState {
     logical_h: f64,
     rdp_w: f64,
     rdp_h: f64,
+    last_check: Instant,
 }
 
 impl MouseCoordMapper {
@@ -31,10 +37,41 @@ impl MouseCoordMapper {
             logical_h: logical_h as f64,
             rdp_w: rdp_w.max(1) as f64,
             rdp_h: rdp_h.max(1) as f64,
+            last_check: Instant::now(),
         })))
     }
 
+    /// Re-read the live CG display size (throttled to once per second) and
+    /// update the mapping basis if the display configuration changed.
+    /// Without this, the basis stays at the value captured at startup and
+    /// the cursor drifts off by the ratio between old and new sizes.
+    fn refresh_logical_size(&self) {
+        {
+            let mut s = self.0.lock().unwrap();
+            if s.last_check.elapsed() < Duration::from_secs(1) {
+                return;
+            }
+            s.last_check = Instant::now();
+        }
+
+        let Ok((w, h)) = macrdp_capture::detect_cg_display_size() else {
+            return;
+        };
+
+        let mut s = self.0.lock().unwrap();
+        if w as f64 != s.logical_w || h as f64 != s.logical_h {
+            tracing::info!(
+                old_w = s.logical_w, old_h = s.logical_h,
+                new_w = w, new_h = h,
+                "MouseCoordMapper: display size changed — mapping basis updated"
+            );
+            s.logical_w = w as f64;
+            s.logical_h = h as f64;
+        }
+    }
+
     pub fn map(&self, rdp_x: u16, rdp_y: u16) -> (u16, u16) {
+        self.refresh_logical_size();
         let s = self.0.lock().unwrap();
         let mac_x = (rdp_x as f64 * s.logical_w / s.rdp_w) as u16;
         let mac_y = (rdp_y as f64 * s.logical_h / s.rdp_h) as u16;
